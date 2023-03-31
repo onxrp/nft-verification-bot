@@ -184,13 +184,14 @@ client.on('ready', async () => {
         console.log('cronjobs scheduled')
         /*************** cron job end *********************/
     } else {
-        await checkExistingUsers()
+        // await checkExistingUsers()
         console.log('Checked existing users');
     }
 
-    const channel = client.channels.cache.get(DISCORD_CHANNEL_ID);
+    const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
     const message = await channel.messages.fetch()
     if (message.size === 0) {
+        console.log('sending verify message')
         channel.send({
             embeds: [verifyEmbed],
             components: [
@@ -206,6 +207,8 @@ client.on('ready', async () => {
                 ),
             ],
         });
+    } else {
+        console.log('verify message already send')
     }
 });
 
