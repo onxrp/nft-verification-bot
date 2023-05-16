@@ -47,8 +47,8 @@ lerna-debug.log*
 .prettierrc.json
 
 # Yarn
+.pnp.*
 .yarn/*
-!.yarn/cache
 !.yarn/patches
 !.yarn/plugins
 !.yarn/releases

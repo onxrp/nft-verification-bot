@@ -159,7 +159,17 @@ const checkExistingUsers = async () => {
                     const member = await guild.members.fetch(user.discordId);
                     await checkUserRoles(walletAddress, member, process.env.NODE_ENV !== 'production')
                 } catch(err) {
-                    console.error(`Error re-checking ${user.discordId} / ${user.walletAddress}: ${err}`)
+                    const message = err?.message ?? err
+                    if (message.indexOf('Unknown Member')) {
+                        console.error(`Error re-checking ${user.discordId} / ${user.walletAddress}: ${message}`)
+                    } else {
+                        try {
+                            console.log(`Deleting ${user.discordId} / ${user.walletAddress}: ${message}`)
+                            await db.collection("UserXPUNKnfts").doc(user.discordId).delete()
+                        } catch(delErr) {
+                            console.error(`Error re-checking ${user.discordId} / ${user.walletAddress}: ${delErr?.message ?? delErr}`)
+                        }
+                    }
                 }
             }))
         }
@@ -185,7 +195,7 @@ client.on('ready', async () => {
         /*************** cron job end *********************/
     } else {
         // await checkExistingUsers()
-        console.log('Checked existing users');
+        // console.log('Checked existing users');
     }
 
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
@@ -210,6 +220,9 @@ client.on('ready', async () => {
     } else {
         console.log('verify message already send')
     }
+
+    await checkExistingUsers()
+    console.log('Checked existing users');
 });
 
 client.on('interactionCreate', async (interaction) => {
