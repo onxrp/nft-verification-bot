@@ -64,8 +64,10 @@ const loadNFTs = async () => {
             else map[owner] = [nft]
             return map
         }, {})
+        return true
     } catch (err) {
         console.error(`Error loading NFTs: ${err}`)
+        return false
     }
 }
 
@@ -144,6 +146,12 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
 
 const checkExistingUsers = async () => {
     try {
+        const success = await loadNFTs()
+        if (!success) {
+            console.error("Not checking existing users, failed to load NFTs")
+            return
+        }
+
         const userData = await db.collection("UserXPUNKnfts").where('discordId', '!=', null).get()
         const users = []
         userData.forEach((document) => users.push(document.data()))
@@ -160,7 +168,7 @@ const checkExistingUsers = async () => {
                     await checkUserRoles(walletAddress, member, process.env.NODE_ENV !== 'production')
                 } catch(err) {
                     const message = err?.message ?? err
-                    if (message.indexOf('Unknown Member')) {
+                    if (message.indexOf('Unknown Member') === -1) {
                         console.error(`Error re-checking ${user.discordId} / ${user.walletAddress}: ${message}`)
                     } else {
                         try {
@@ -193,9 +201,6 @@ client.on('ready', async () => {
         });
         console.log('cronjobs scheduled')
         /*************** cron job end *********************/
-    } else {
-        // await checkExistingUsers()
-        // console.log('Checked existing users');
     }
 
     const channel = await client.channels.fetch(DISCORD_CHANNEL_ID);
