@@ -84,6 +84,10 @@ const verifyEmbed = new EmbedBuilder()
     );
 
 const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV !== 'production') => {
+    if (!xpunksNFTs || Object.entries(xpunksNFTs).length === 0 || !unixpunksNFTs || Object.entries(unixpunksNFTs).length === 0) {
+        console.error('No NFTs, checkUserRoles failed')
+    }
+
     const selectedAccountNFT = xpunksNFTs[walletAddress?.toLowerCase()] ?? [];
     const selectedAccountUnixNFT = unixpunksNFTs[walletAddress?.toLowerCase()] ?? [];
     const accountNFTLength = selectedAccountNFT.length;
