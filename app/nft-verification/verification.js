@@ -41,24 +41,36 @@ const roles= {
     noNftsRole:'910842757239672834',
 }
 
+const callNFTApi = async (uri) => {
+    try {
+        let response = await axios.get(uri, { headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' } })
+        if (response.status !== 200) {
+            response = await axios.get(uri, { headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' } })
+        }
+        return response?.data?.data
+    } catch(err) {
+        console.error('Error calling nft API, retrying', err?.message ?? err)
+        response = await axios.get(uri, { headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' } })
+        return response?.data?.data
+    }
+}
+
 let xpunksNFTs = {}
 let unixpunksNFTs = {}
 const loadNFTs = async () => {
     try {
-        const xpunksNFTResponse = await axios.get(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.XPUNKS_NFT_ISSUER_ADDRESS}`, {
-            headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' }
-        })
-        xpunksNFTs = xpunksNFTResponse.status !== 200 ? xpunksNFTs : (xpunksNFTResponse?.data?.data?.nfts ?? []).reduce((map, nft) => {
+        const xpunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.XPUNKS_NFT_ISSUER_ADDRESS}`)
+        if (!xpunksData.nfts) throw new Error('No NFTs found')
+        xpunksNFTs = xpunksData.nfts.reduce((map, nft) => {
             const owner = nft.Owner.toLowerCase()
             if (map[owner]) map[owner].push(nft)
             else map[owner] = [nft]
             return map
         }, {})
 
-        const unixpunksNFTResponse = await axios.get(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.UNIX_XPUNKS_NFT_ISSUER_ADDRESS}`, {
-            headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' }
-        })
-        unixpunksNFTs = unixpunksNFTResponse.status !== 200 ? unixpunksNFTs : (unixpunksNFTResponse?.data?.data?.nfts ?? []).reduce((map, nft) => {
+        const unixPunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.UNIX_XPUNKS_NFT_ISSUER_ADDRESS}`)
+        if (!unixPunksData.nfts) throw new Error('No NFTs found')
+        unixpunksNFTs = unixPunksData.nfts.reduce((map, nft) => {
             const owner = nft.Owner.toLowerCase()
             if (map[owner]) map[owner].push(nft)
             else map[owner] = [nft]
@@ -66,7 +78,7 @@ const loadNFTs = async () => {
         }, {})
         return true
     } catch (err) {
-        console.error(`Error loading NFTs: ${err}`)
+        console.error(`Error loading NFTs: ${err?.message ?? err}`)
         return false
     }
 }
