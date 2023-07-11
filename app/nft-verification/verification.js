@@ -89,7 +89,7 @@ const verifyEmbed = new EmbedBuilder()
     .setURL('https://xpunks.club/')
     .setDescription('**Verify your assets** \n\n ◆ If you want to gain access to the rest of the server and join us in the Punkhouse, verify your XPUNKS and/or UNIXPUNKS NFTs holdings by completing the verification process with the XUMM app. \n\n ◆ This is a read-only connection. Do not share your private keys. We will never ask for your seed phrase. We will never DM you.')
     .setThumbnail('https://onxrp.com/wp-content/uploads/2022/11/Twitter-Bot.png')
-    .setImage('https://xpunks.club/wp-content/uploads/2022/11/Banner-2048x403.png')
+    .setImage('https://nftimg.onxrp.com/xpunks_banner.png')
     .setTimestamp()
     .setFooter(
         { text: 'Powered by XPUNKS', iconURL: 'https://xpunks.club/wp-content/uploads/2021/10/Kaj-Bradley-Punkhouse.png' }
