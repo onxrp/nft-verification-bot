@@ -13,8 +13,6 @@ const { XummSdk } = require("xumm-sdk");
 const axios = require("axios")
 var cron = require('node-cron');
 
-// const userModel = require("./model");
-
 const firebase = require("firebase-admin");
 const serviceAccount = require("../../serviceAccountKey.json");
 firebase.initializeApp({
@@ -39,6 +37,64 @@ const roles= {
     oneUnixNft:'1059533146909069452',
     tenUnixNft:'1059533247043862568',
     noNftsRole:'910842757239672834',
+    prefabOwner:'1143477973475917864',
+    prefabOwner5:'1143477828361388082',
+    landPlotOwner:'1143477758673043487',
+    domeOwner:'1143477923945402428',
+}
+
+let xpunksNFTs = {}
+let unixpunksNFTs = {}
+let edenNFTs = {}
+let dbUsers = []
+
+const checkDuplicates = async (walletAddress, discordId) => {
+    const duplicateWallets = dbUsers.filter(u => u.walletAddress && u.walletAddress.toLowerCase().indexOf(walletAddress.toLowerCase()) !== -1)
+    let update = false;
+    const batch = db.batch();
+    duplicateWallets.forEach(duplicate => {
+        if (!discordId || duplicate.discordId !== discordId) {
+            const document = db.collection('UserXPUNKnfts').doc(duplicate.discordId)
+            let walletAddresses = (duplicate.walletAddress ?? '').split(',')
+            walletAddresses = walletAddresses.filter(a => a.toLowerCase() !== duplicate.walletAddress.toLowerCase())
+            batch.update(document, { walletAddress: walletAddresses.join(',') });
+            update = true;
+        }
+    });
+    if (update) await batch.commit()
+}
+
+const mergeDatabases = async () => {
+    try {
+        const mergeData = await db.collection("UserEdennfts").where('discordId', '!=', null).get()
+        const mergeUsers = []
+        mergeData.forEach((document) => mergeUsers.push(document.data()))
+        
+        let update = false
+        const batch = db.batch();
+        mergeUsers.forEach(userToMerge => {
+            const document = db.collection('UserXPUNKnfts').doc(userToMerge.discordId)
+            const existingUser = dbUsers.find(u => u.discordId.toLowerCase() === userToMerge.discordId.toLowerCase())
+            if (existingUser) {
+                let walletAddresses = (existingUser.walletAddress ?? '').split(',')
+                if (!walletAddresses.some(wa => wa.toLowerCase() === userToMerge.walletAddress.toLowerCase())) {
+                    walletAddresses = walletAddresses.filter(a => a.toLowerCase() !== userToMerge.walletAddress.toLowerCase())
+                    walletAddresses.push(userToMerge.walletAddress)
+                    if (walletAddresses.length > 1) console.log(existingUser, userToMerge)
+                    batch.update(document, { walletAddress: walletAddresses.join(',') });
+                    update = true
+                }
+            } else {
+                batch.set(document, { discordId: userToMerge.discordId, walletAddress: userToMerge.walletAddress })
+                update = true
+            }
+        });
+        if (update) await batch.commit()
+    } catch(err) {
+        console.error('Error calling nft API, retrying', err?.message ?? err)
+        response = await axios.get(uri, { headers: { 'x-api-key': process.env.XRPLDATA_API_KEY ?? '' } })
+        return response?.data?.data
+    }
 }
 
 const callNFTApi = async (uri) => {
@@ -55,44 +111,84 @@ const callNFTApi = async (uri) => {
     }
 }
 
-let xpunksNFTs = {}
-let unixpunksNFTs = {}
-const loadNFTs = async () => {
-    try {
-        const xpunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.XPUNKS_NFT_ISSUER_ADDRESS}`)
-        if (!xpunksData.nfts) throw new Error('No NFTs found')
-        xpunksNFTs = xpunksData.nfts.reduce((map, nft) => {
-            const owner = nft.Owner.toLowerCase()
-            if (map[owner]) map[owner].push(nft)
-            else map[owner] = [nft]
-            return map
-        }, {})
+const loadNFTsAndUsers = async () => {
+    const results = await Promise.all([
+        (async () => {
+            try {
+                const xpunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.XPUNKS_NFT_ISSUER_ADDRESS}`)
+                if (!xpunksData.nfts) throw new Error('No NFTs found')
+                xpunksNFTs = xpunksData.nfts.reduce((map, nft) => {
+                    const owner = nft.Owner.toLowerCase()
+                    if (map[owner]) map[owner].push(nft)
+                    else map[owner] = [nft]
+                    return map
+                }, {})
+        
+                const unixPunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.UNIX_XPUNKS_NFT_ISSUER_ADDRESS}`)
+                if (!unixPunksData.nfts) throw new Error('No NFTs found')
+                unixpunksNFTs = unixPunksData.nfts.reduce((map, nft) => {
+                    const owner = nft.Owner.toLowerCase()
+                    if (map[owner]) map[owner].push(nft)
+                    else map[owner] = [nft]
+                    return map
+                }, {})
+                return true
+            } catch (err) {
+                console.error(`Error loading NFTs: ${err?.message ?? err}`)
+                return false
+            }
+        })(),
 
-        const unixPunksData = await callNFTApi(`https://api.xrpldata.com/api/v1/xls20-nfts/issuer/${process.env.UNIX_XPUNKS_NFT_ISSUER_ADDRESS}`)
-        if (!unixPunksData.nfts) throw new Error('No NFTs found')
-        unixpunksNFTs = unixPunksData.nfts.reduce((map, nft) => {
-            const owner = nft.Owner.toLowerCase()
-            if (map[owner]) map[owner].push(nft)
-            else map[owner] = [nft]
-            return map
-        }, {})
-        return true
-    } catch (err) {
-        console.error(`Error loading NFTs: ${err?.message ?? err}`)
-        return false
-    }
+        (async () => {
+            try {
+                const edenMPNFTs = await callNFTApi(`https://marketplace-api.onxrp.com/api/nfts-minimal?collection=184224503&attributes=true`)
+                if (!edenMPNFTs || edenMPNFTs.length === 0) throw new Error('No NFTs found')
+
+                edenNFTs = edenMPNFTs.reduce((map, nft) => {
+                    const owner = nft.owner_wallet_id.toLowerCase()
+                    if (!map[owner]) map[owner] = { prefabs: [], plots: [], domes: [] }
+                    const ownerNFTs = map[owner]
+                    const type = nft.nftAttributes.find(att => att.key === 'Type')?.value
+                    if (type === 'Pre-fab') ownerNFTs.prefabs.push(nft)
+                    else if (type === 'Land Plot') ownerNFTs.plots.push(nft)
+                    else if (type === 'Dome') ownerNFTs.domes.push(nft)
+                    return map
+                }, {})
+                return true
+            } catch (err) {
+                console.error(`Error loading onxrp Eden NFTs: ${err?.message ?? err}`)
+                return false
+            }
+        })(),
+
+        (async () => {
+            try {
+                const userData = await db.collection("UserXPUNKnfts").where('discordId', '!=', null).get()
+                dbUsers = []
+                userData.forEach((document) => dbUsers.push(document.data()))
+                return true
+            } catch(err) {
+                console.error(`Error db users: ${err?.message ?? err}`)
+                return false
+            }
+        })(),
+    ])
+    return results[0] && results[1] && results[2]
 }
 
 const verifyEmbed = new EmbedBuilder()
     .setColor("#ffffff")
-    .setTitle('NFT VERIFICATION')
+    .setTitle('NFT verification Gate')
     .setURL('https://xpunks.club/')
-    .setDescription('**Verify your assets** \n\n ◆ If you want to gain access to the rest of the server and join us in the Punkhouse, verify your XPUNKS and/or UNIXPUNKS NFTs holdings by completing the verification process with the XUMM app. \n\n ◆ This is a read-only connection. Do not share your private keys. We will never ask for your seed phrase. We will never DM you.')
-    .setThumbnail('https://onxrp.com/wp-content/uploads/2022/11/Twitter-Bot.png')
-    .setImage('https://nftimg.onxrp.com/xpunks_banner.png')
+    .setDescription(`**Welcome to The Punkhouse** \n
+        To receive full access to the server, you must verify that you are a holder of XPUNKS, Eden, or UNIXPUNKS. Click the Verify button below to get started.\n
+        This is a read-only connection. Do not share your private keys. We will never ask for your seed phrase. We will never DM you.`)
+    // .setThumbnail('https://onxrp.com/wp-content/uploads/2022/11/Twitter-Bot.png')
+    .setThumbnail('https://firebasestorage.googleapis.com/v0/b/onxrp-21175.appspot.com/o/projects%2FEden%2FEden%20Patch.png?alt=media&token=51825218-27f3-43f3-8b5c-6a6e15792c34')
+    // .setImage('https://nftimg.onxrp.com/xpunks_banner.png')
     .setTimestamp()
     .setFooter(
-        { text: 'Powered by XPUNKS', iconURL: 'https://xpunks.club/wp-content/uploads/2021/10/Kaj-Bradley-Punkhouse.png' }
+        { text: 'Powered by XPUNKS', iconURL: 'https://firebasestorage.googleapis.com/v0/b/onxrp-21175.appspot.com/o/projects%2FXPUNK%2FXFItgsdK_400x400.jpg?alt=media&token=c7c29e39-a086-40b4-927c-089a66f06c6c' }
     );
 
 const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV !== 'production') => {
@@ -100,18 +196,36 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
         console.error('No NFTs, checkUserRoles failed')
     }
 
-    const selectedAccountNFT = xpunksNFTs[walletAddress?.toLowerCase()] ?? [];
-    const selectedAccountUnixNFT = unixpunksNFTs[walletAddress?.toLowerCase()] ?? [];
+    let walletAddresses = (walletAddress ?? '').split(',');
+    let selectedAccountNFT = []
+    let selectedAccountUnixNFT = []
+    let edenPrefabs = []
+    let edenPlots = []
+    let edenDomes = []
+    
+    if (walletAddresses.length > 0) {
+        for (const walletAddress of walletAddresses) {
+            selectedAccountNFT.push(...(xpunksNFTs[walletAddress?.toLowerCase()] ?? []));
+            selectedAccountUnixNFT.push(...(unixpunksNFTs[walletAddress?.toLowerCase()] ?? []));
+            const { prefabs, plots, domes } = edenNFTs[walletAddress?.toLowerCase()] ?? { prefabs: [], plots: [], domes: [] }
+            edenPrefabs.push(...(prefabs ?? []));
+            edenPlots.push(...(plots ?? []));
+            edenDomes.push(...(domes ?? []));
+        }
+    }
+
     const accountNFTLength = selectedAccountNFT.length;
     const accountNFTUnixLength = selectedAccountUnixNFT.length;
+    const accountEdenNFTLength = edenPrefabs.length + edenPlots.length + edenDomes.length
     if (log) console.log('accountNFTLength', accountNFTLength);
     if (log) console.log('accountNFTUnixLength', accountNFTUnixLength);
+    if (log) console.log('accountEdenNFTLength', accountEdenNFTLength);
     
     // XPUNKS 
     const hasRoleOneNft = member.roles.cache.has(roles.oneNft);
     const hasRoleFiveNft = member.roles.cache.has(roles.fiveNft);
     const hasRoleTwentyNft = member.roles.cache.has(roles.twentyNft);
-    if (walletAddress === null || accountNFTLength <= 0) {
+    if (accountNFTLength <= 0) {
         if (hasRoleOneNft) await member.roles.remove(roles.oneNft);
         if (hasRoleFiveNft) await member.roles.remove(roles.fiveNft);
         if (hasRoleTwentyNft) await member.roles.remove(roles.twentyNft);
@@ -133,7 +247,7 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
     const hasRoleOneUnixNft = member.roles.cache.has(roles.oneUnixNft);
     const hasRoleTenUnixNft = member.roles.cache.has(roles.tenUnixNft);
 
-    if (walletAddress === null || accountNFTUnixLength <= 0) {
+    if (accountNFTUnixLength <= 0) {
         if (hasRoleOneUnixNft) await member.roles.remove(roles.oneUnixNft);
         if (hasRoleTenUnixNft) await member.roles.remove(roles.tenUnixNft);
     } else if (accountNFTUnixLength >= 1 && accountNFTUnixLength < 10) {
@@ -145,7 +259,7 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
     }
 
     const hasRoleNoNfts = member.roles.cache.has(roles.noNftsRole);
-    if (walletAddress === null || (accountNFTUnixLength <= 0 && accountNFTLength <= 0)) {
+    if (accountNFTUnixLength <= 0 && accountNFTLength <= 0) {
         if (!hasRoleNoNfts) {
             if (log) console.log("adding no nfts role")
             await member.roles.add(roles.noNftsRole);
@@ -157,23 +271,37 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
         }
     }
 
-    return { accountNFTLength, accountNFTUnixLength }
+    // Eden
+    const hasPrefabOwner = member.roles.cache.has(roles.prefabOwner);
+    const hasPrefabOwner5 = member.roles.cache.has(roles.prefabOwner5);
+    const hasLandPlotOwner = member.roles.cache.has(roles.landPlotOwner);
+    const hasDomeOwner = member.roles.cache.has(roles.domeOwner);
+
+    if (edenPrefabs.length > 0 && !hasPrefabOwner) await member.roles.add(roles.prefabOwner);
+    else if (edenPrefabs.length === 0 && hasPrefabOwner) await member.roles.remove(roles.prefabOwner);
+
+    if (edenPrefabs.length >= 5 && !hasPrefabOwner5) await member.roles.add(roles.prefabOwner5);
+    else if (edenPrefabs.length < 5 && hasPrefabOwner5) await member.roles.remove(roles.prefabOwner5);
+
+    if (edenPlots.length > 0 && !hasLandPlotOwner) await member.roles.add(roles.landPlotOwner);
+    else if (edenPlots.length === 0 && hasLandPlotOwner) await member.roles.remove(roles.landPlotOwner);
+
+    if (edenDomes.length > 0 && !hasDomeOwner) await member.roles.add(roles.domeOwner);
+    else if (edenDomes.length === 0 && hasDomeOwner) await member.roles.remove(roles.domeOwner);
+
+    return { accountNFTLength, accountNFTUnixLength, accountEdenNFTLength }
 }
 
 const checkExistingUsers = async () => {
     try {
-        const success = await loadNFTs()
+        const success = await loadNFTsAndUsers()
         if (!success) {
             console.error("Not checking existing users, failed to load NFTs")
             return
         }
 
-        const userData = await db.collection("UserXPUNKnfts").where('discordId', '!=', null).get()
-        const users = []
-        userData.forEach((document) => users.push(document.data()))
-
-        for (let idx = 0; idx < users.length; idx = idx + 20) {
-            const usersToCheck = users.slice(idx, idx + 20)
+        for (let idx = 0; idx < dbUsers.length; idx = idx + 20) {
+            const usersToCheck = dbUsers.slice(idx, idx + 20)
             await Promise.all(usersToCheck.map(async user => {
                 try {
                     if (!user.discordId) return;
@@ -203,14 +331,89 @@ const checkExistingUsers = async () => {
     }
 }
 
+const getRolesData = (member, walletAddress) => {
+    let walletAddresses = (walletAddress ?? '').split(',');
+    let selectedAccountNFT = []
+    let selectedAccountUnixNFT = []
+    let edenPrefabs = []
+    let edenPlots = []
+    let edenDomes = []
+    
+    if (walletAddresses.length > 0) {
+        for (const walletAddress of walletAddresses) {
+            selectedAccountNFT.push(...(xpunksNFTs[walletAddress?.toLowerCase()] ?? []));
+            selectedAccountUnixNFT.push(...(unixpunksNFTs[walletAddress?.toLowerCase()] ?? []));
+            const { prefabs, plots, domes } = edenNFTs[walletAddress?.toLowerCase()] ?? { prefabs: [], plots: [], domes: [] }
+            edenPrefabs.push(...(prefabs ?? []));
+            edenPlots.push(...(plots ?? []));
+            edenDomes.push(...(domes ?? []));
+        }
+    }
+
+    const accountNFTLength = selectedAccountNFT.length;
+    const accountNFTUnixLength = selectedAccountUnixNFT.length;
+    const accountEdenNFTLength = edenPrefabs.length + edenPlots.length + edenDomes.length
+
+    const hasRoleOneNft = member.roles.cache.has(roles.oneNft);
+    const hasRoleFiveNft = member.roles.cache.has(roles.fiveNft);
+    const hasRoleTwentyNft = member.roles.cache.has(roles.twentyNft);
+
+    const guild = client.guilds.cache.get(GUILD_ID);
+    let roleText = ''
+    if (hasRoleOneNft) {
+        const role = guild.roles.cache.find((r) => r.id === roles.oneNft);
+        roleText += `\n<@&${role.id}> for owning ${accountNFTLength} XPUNK${accountNFTLength > 1 ? 'S' : ''}`;
+    } else if (hasRoleFiveNft) {
+        const role = guild.roles.cache.find((r) => r.id === roles.fiveNft);
+        roleText += `\n<@&${role.id}> for owning ${accountNFTLength} XPUNK${accountNFTLength > 1 ? 'S' : ''}`;
+    } else if (hasRoleTwentyNft) {
+        const role = guild.roles.cache.find((r) => r.id === roles.twentyNft);
+        roleText += `\n<@&${role.id}> for owning ${accountNFTLength} XPUNK${accountNFTLength > 1 ? 'S' : ''}`;
+    }
+
+    const hasRoleOneUnixNft = member.roles.cache.has(roles.oneUnixNft);
+    const hasRoleTenUnixNft = member.roles.cache.has(roles.tenUnixNft);
+    if (hasRoleOneUnixNft) {
+        const role = guild.roles.cache.find((r) => r.id === roles.oneUnixNft);
+        roleText += `\n<@&${role.id}> for owning ${accountNFTUnixLength} UNIXPUNK${accountNFTUnixLength > 1 ? 'S' : ''}`;
+    } else if (hasRoleTenUnixNft) {
+        const role = guild.roles.cache.find((r) => r.id === roles.tenUnixNft);
+        roleText += `\n<@&${role.id}> for owning ${accountNFTUnixLength} UNIXPUNK${accountNFTUnixLength > 1 ? 'S' : ''}`;
+    }
+
+    const hasPrefabOwner = member.roles.cache.has(roles.prefabOwner);
+    const hasPrefabOwner5 = member.roles.cache.has(roles.prefabOwner5);
+    const hasLandPlotOwner = member.roles.cache.has(roles.landPlotOwner);
+    const hasDomeOwner = member.roles.cache.has(roles.domeOwner);
+    if (hasPrefabOwner) {
+        const role = guild.roles.cache.find((r) => r.id === roles.prefabOwner);
+        roleText += `\n<@&${role.id}> for owning ${edenPrefabs.length} Eden Pre-fab${edenPrefabs.length > 1 ? 's' : ''}`;
+    }
+    if (hasPrefabOwner5) {
+        const role = guild.roles.cache.find((r) => r.id === roles.prefabOwner5);
+        roleText += `\n<@&${role.id}> for owning ${edenPrefabs.length} Eden Pre-fab${edenPrefabs.length > 1 ? 's' : ''}`;
+    }
+    if (hasLandPlotOwner) {
+        const role = guild.roles.cache.find((r) => r.id === roles.landPlotOwner);
+        roleText += `\n<@&${role.id}> for owning ${edenPlots.length} Eden Land Plot${edenPlots.length > 1 ? 's' : ''}`;
+    }
+    if (hasDomeOwner) {
+        const role = guild.roles.cache.find((r) => r.id === roles.domeOwner);
+        roleText += `\n<@&${role.id}> for owning ${edenDomes.length} Eden Dome${edenDomes.length > 1 ? 's' : ''}`;
+    }
+    
+    return { roleText, walletAddresses, accountNFTLength, accountNFTUnixLength, accountEdenNFTLength }
+}
+
 client.on('ready', async () => {
     console.log('Bot is online, loading NFTs');
-    await loadNFTs()
+    await loadNFTsAndUsers()
+    // await mergeDatabases()
 
     if (process.env.NODE_ENV === 'production') {
         /*************** cron jobs start *********************/
         cron.schedule('*/1 * * * *', async () => {
-            await loadNFTs()
+            await loadNFTsAndUsers()
         });
         cron.schedule('0 */1 * * *', async () => {
             await checkExistingUsers()
@@ -267,12 +470,12 @@ client.on('interactionCreate', async (interaction) => {
                     .setColor("#ffffff")
                     .setTitle("AUTH LINK - Click here for mobile")
                     .setURL(`${subscription.created.next.always}`)
-                    .setDescription('◆ Scan this QR code with your XUMM wallet to verify that you hold XPUNKS and/or UNIXPUNKS NFTs. This is a read-only transaction. \n\n ◆ The last wallet that you sign with, is used to determine if you are eligible to enter the Punkhouse!')
-
+                    .setDescription(`◆ Scan this QR code with your XUMM wallet to verify that you hold XPUNKS, UNIXPUNKS and/or Eden NFTs. This is a read-only transaction. \n
+                        ◆ You are able to map multiple wallets. If you want to map another wallet, run the Verify command again.`)
                     .setImage(`${subscription.created.refs.qr_png}`)
                     .setTimestamp()
                     .setFooter(
-                        { text: 'Powered by XPUNKS', iconURL: 'https://xpunks.club/wp-content/uploads/2021/10/Kaj-Bradley-Punkhouse.png' }
+                        { text: 'Powered by XPUNKS', iconURL: 'https://firebasestorage.googleapis.com/v0/b/onxrp-21175.appspot.com/o/projects%2FXPUNK%2FXFItgsdK_400x400.jpg?alt=media&token=c7c29e39-a086-40b4-927c-089a66f06c6c' }
                     );
                 await interaction.editReply({
                     ephemeral: true,
@@ -281,107 +484,58 @@ client.on('interactionCreate', async (interaction) => {
                 const resolveData = await subscription.resolved;
                 if (resolveData.signed == false) {
                     return interaction.followUp({ content: 'User rejected the request', ephemeral: true });
-
                 } else if (resolveData.signed == true) {
                     const result = await Sdk.payload.get(resolveData.payload_uuidv4)
-                    const account = result.response.account;
-
-                    const checkDuplicates = async (walletAddress, discordId) => {
-                        const findDuplicateWallet = await db.collection("UserXPUNKnfts").where('walletAddress', '==', walletAddress).get();
-                        const update = false;
-                        const batch = db.batch();
-                        findDuplicateWallet.forEach(document => {
-                            const data = document.data()
-                            if (!discordId || data.discordId !== discordId) {
-                                batch.update(document, { walletAddress: null });
-                                update = true;
-                            }
-                        });
-                        if (update) await batch.commit()
-                    }
+                    let walletAddress = result.response.account;
 
                     const userDocument = db.collection("UserXPUNKnfts").doc(interaction.member.user.id);
                     const userData = await userDocument.get()
                     if (userData.exists) {
-                        await checkDuplicates(account, userData.data().discordId)
+                        const existingUser = userData.data()
+                        await checkDuplicates(walletAddress, existingUser.discordId)
+
+                        let walletAddresses = (existingUser.walletAddress ?? '').split(',')
+                        walletAddresses = walletAddresses.filter(a => a.toLowerCase() !== walletAddress.toLowerCase())
+                        walletAddresses.push(walletAddress)
+                        walletAddress = walletAddresses.join(',')
                     } else {
-                        await checkDuplicates(account)
+                        await checkDuplicates(walletAddress)
                     }
 
                     await userDocument.set({
                         discordId: interaction.member.user.id,
-                        walletAddress: account,
+                        walletAddress,
                     });
 
-                    const { accountNFTLength, accountNFTUnixLength } = await checkUserRoles(account, interaction.member, true)
+                    const { accountNFTLength, accountEdenNFTLength, accountNFTUnixLength } = await checkUserRoles(walletAddress, interaction.member, true)
 
-                    if (accountNFTLength == 0 && accountNFTUnixLength == 0) {
+                    if (accountNFTLength == 0 && accountNFTUnixLength == 0 && accountEdenNFTLength == 0) {
                         return interaction.followUp({ content: `No NFTs found`, ephemeral: true });
                     }
-                    return interaction.followUp({ content: `Verification successful`, ephemeral: true });
+                    
+                    const guild = client.guilds.cache.get(GUILD_ID);
+                    const reloadedMember = await guild.members.fetch(interaction.member.user.id);
+                    const { roleText } = getRolesData(reloadedMember, walletAddress)
+                    return interaction.followUp({ 
+                        content: `Verification successful.\n\nYou have been assigned the following roles: ${roleText}`,
+                        ephemeral: true
+                    });
                 }
             } else if (btnId === 'primary') {
                 const discordId = interaction.member.user.id;
                 const userDocument = await db.collection("UserXPUNKnfts").doc(discordId).get();
                 const userData = userDocument.exists ? userDocument.data() : null
 
-                let walletAddress = userData ? userData.walletAddress : 'not set';
-                let accountNFTLength = 0;
-                let accountNFTUnixLength = 0;
-                if (walletAddress && walletAddress !== 'not set') {
-                    const selectedAccountNFT = xpunksNFTs[walletAddress?.toLowerCase()] ?? [];
-                    const selectedAccountUnixNFT = unixpunksNFTs[walletAddress?.toLowerCase()] ?? [];
-                    accountNFTLength = selectedAccountNFT.length;
-                    accountNFTUnixLength = selectedAccountUnixNFT.length;
-                }
-
-                const hasRoleOneNft = interaction.member.roles.cache.has(roles.oneNft);
-                const hasRoleFiveNft = interaction.member.roles.cache.has(roles.fiveNft);
-                const hasRoleTwentyNft = interaction.member.roles.cache.has(roles.twentyNft);
-
-                const guild = client.guilds.cache.get(GUILD_ID);
-                let roleName = null;
-                let roleNameUnix = null;
-                if (hasRoleOneNft) {
-                    const role = guild.roles.cache.find((r) => r.id === roles.oneNft);
-                    roleName = role.name;
-                } else if (hasRoleFiveNft) {
-                    const role = guild.roles.cache.find((r) => r.id === roles.fiveNft);
-                    roleName = role.name;
-                } else if (hasRoleTwentyNft) {
-                    const role = guild.roles.cache.find((r) => r.id === roles.twentyNft);
-                    roleName = role.name;
-                }
-
-                const hasRoleOneUnixNft = interaction.member.roles.cache.has(roles.oneUnixNft);
-                const hasRoleTenUnixNft = interaction.member.roles.cache.has(roles.tenUnixNft);
-                if (hasRoleOneUnixNft) {
-                    const role = guild.roles.cache.find((r) => r.id === roles.oneUnixNft);
-                    roleNameUnix = role.name;
-                } else if (hasRoleTenUnixNft) {
-                    const role = guild.roles.cache.find((r) => r.id === roles.tenUnixNft);
-                    roleNameUnix = role.name;
-                }
-
-                let showRole;
-                if (roleName == null && roleNameUnix == null) {
-                    showRole = null;
-                } else if (roleName == null) {
-                    showRole = roleNameUnix;
-                } else if (roleNameUnix == null) {
-                    showRole = roleName;
-                } else {
-                    showRole = roleName + ", " + roleNameUnix;
-                }
-
+                const { roleText, walletAddresses, accountNFTLength, accountNFTUnixLength, accountEdenNFTLength } = getRolesData(interaction.member, userData ? userData.walletAddress : '')
                 const statusEmbed = new EmbedBuilder()
                     .setColor("#ffffff")
                     .setTitle("Verification Status")
-                    .setDescription(`◆ **Wallet Address - ** ${walletAddress} \n ◆ **Total XPUNKS NFT - ** ${accountNFTLength} \n ◆ **Total UNIXPUNKS NFT - ** ${accountNFTUnixLength} \n ◆ **Role Name - ** ${showRole} \n`)
+                    .setDescription(`◆ **Wallet addresses mapped - ** ${walletAddresses.length > 1 ? '\n' : ''}${walletAddresses.join('\n')}
+                        ◆ **Total XPUNKS NFTs - ** ${accountNFTLength}
+                        ◆ **Total UNIXPUNKS NFTs - ** ${accountNFTUnixLength}
+                        ◆ **Total Eden NFTs - ** ${accountEdenNFTLength}
+                        ◆ **You have been assigned the following roles: ** ${roleText} \n`)
                     .setTimestamp()
-                    .setFooter(
-                        { text: 'Powered by XPUNKS', iconURL: 'https://xpunks.club/wp-content/uploads/2021/10/Kaj-Bradley-Punkhouse.png' }
-                    );
                 return interaction.editReply({ embeds: [statusEmbed], ephemeral: true });
 
             }
