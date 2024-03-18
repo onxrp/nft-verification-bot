@@ -258,18 +258,19 @@ const checkUserRoles = async (walletAddress, member, log = process.env.NODE_ENV 
         if (!hasRoleTenUnixNft) await member.roles.add(roles.tenUnixNft);
     }
 
-    const hasRoleNoNfts = member.roles.cache.has(roles.noNftsRole);
-    if (accountNFTUnixLength <= 0 && accountNFTLength <= 0) {
-        if (!hasRoleNoNfts) {
-            if (log) console.log("adding no nfts role")
-            await member.roles.add(roles.noNftsRole);
-        }
-    } else {
-        if (hasRoleNoNfts) {
-            if (log) console.log("removing no nfts role")
-            await member.roles.remove(roles.noNftsRole);
-        }
-    }
+    // not used anymore, different setup
+    // const hasRoleNoNfts = member.roles.cache.has(roles.noNftsRole);
+    // if (accountNFTUnixLength <= 0 && accountNFTLength <= 0) {
+    //     if (!hasRoleNoNfts) {
+    //         if (log) console.log("adding no nfts role")
+    //         await member.roles.add(roles.noNftsRole);
+    //     }
+    // } else {
+    //     if (hasRoleNoNfts) {
+    //         if (log) console.log("removing no nfts role")
+    //         await member.roles.remove(roles.noNftsRole);
+    //     }
+    // }
 
     // Eden
     const hasPrefabOwner = member.roles.cache.has(roles.prefabOwner);
