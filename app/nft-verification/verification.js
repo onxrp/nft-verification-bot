@@ -141,7 +141,7 @@ const loadNFTsAndUsers = async () => {
 
         (async () => {
             try {
-                const edenMPNFTs = await callNFTApi(`https://marketplace-api.onxrp.com/api/nfts-minimal?collection=184224503&attributes=true`)
+                const edenMPNFTs = await callNFTApi(`https://api.bidds.com/api/nfts-minimal?collection=184224503&attributes=true`)
                 if (!edenMPNFTs || edenMPNFTs.length === 0) throw new Error('No NFTs found')
 
                 edenNFTs = edenMPNFTs.reduce((map, nft) => {
